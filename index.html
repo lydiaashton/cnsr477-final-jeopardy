@@ -308,7 +308,7 @@ button:disabled { opacity: .4; cursor: default; transform: none; }
     </div>
     <div class="role-card" onclick="pickTeam()">
       <div class="icon">&#128241;</div>
-      <h2>I'm a Team</h2>
+      <h2>I'm a Team/Player</h2>
       <p>Join on your phone or laptop and answer questions live</p>
     </div>
     <div class="role-card" onclick="pickSolo()">
@@ -1493,28 +1493,28 @@ function buildOpenEndedBtns(alreadyCovered) {
 function awardTeams(teamIds, markDone = true) {
   if (!hostCur) return;
   const val = hostCur.val;
-  const updates = {};
 
-  teamIds.forEach(id => {
-    const current = allTeams[id] ? (allTeams[id].score || 0) : 0;
-    updates['teams/' + id + '/score'] = current + val;
-    if (allTeams[id]) allTeams[id].score = current + val;
-  });
+  // Use transactions so score increments are atomic — immune to stale local cache
+  const txnPromises = teamIds.map(id =>
+    db.ref('teams/' + id + '/score').transaction(cur => (cur || 0) + val)
+  );
 
   if (markDone) {
     const key = hostCur.col + '-' + hostCur.row;
     const winnerName = teamIds.length === 1 ? (allTeams[teamIds[0]] ? allTeams[teamIds[0]].name : '?')
                      : (teamIds.length + ' teams');
     hostCellState[key] = { teamName: winnerName, val };
-    updates['game/cellState'] = hostCellState;
-    updates['game/state']     = 'idle';
-    updates['game/currentQ']  = null;
-    updates['game/timerEnd']  = null;
+    db.ref().update({
+      'game/cellState': hostCellState,
+      'game/state':     'idle',
+      'game/currentQ':  null,
+      'game/timerEnd':  null
+    });
+    buildHostBoard(hostCellState);
   }
 
-  db.ref().update(updates);
-  if (markDone) buildHostBoard(hostCellState);
-  renderHostScoreboard();
+  // Re-render scoreboard once all transactions confirm
+  Promise.all(txnPromises).then(() => renderHostScoreboard());
 }
 
 function closeHostModal() {
